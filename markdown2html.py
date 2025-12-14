@@ -1,137 +1,137 @@
 #!/usr/bin/python3
-"""
-Write a script that takes an argument 2 strings
-"""
-import sys
+"""Minimal Markdown to HTML converter entrypoint."""
+
+
 import os
+import sys
+import re
 import hashlib
+
+
+def process_inline_formatting(text):
+    """
+    Process inline markdown formatting:
+    **bold**, __italic__, [[MD5]], ((remove c)).
+    """
+    def md5_replace(match):
+        content = match.group(1)
+        md5_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+        return md5_hash
+
+    text = re.sub(r'\[\[(.+?)\]\]', md5_replace, text)
+
+    def remove_c_replace(match):
+        content = match.group(1)
+        return content.translate(str.maketrans('', '', 'cC'))
+
+    text = re.sub(r'\(\((.+?)\)\)', remove_c_replace, text)
+
+
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+
+    text = re.sub(r'__(.+?)__', r'<em>\1</em>', text)
+    return text
 
 
 def main():
     """
-    Main entry point for the script
+    Validate arguments and prepare output file.
     """
-    if len(sys.argv) != 3:
+    if len(sys.argv) < 3:
         print("Usage: ./markdown2html.py README.md README.html",
               file=sys.stderr)
         sys.exit(1)
 
-    if not os.path.isfile(sys.argv[1]):
-        print(f'Missing {sys.argv[1]}', file=sys.stderr)
+    md_file = sys.argv[1]
+    output_file = sys.argv[2]
+
+    if not os.path.isfile(md_file):
+        print(f"Missing {md_file}", file=sys.stderr)
         sys.exit(1)
 
-    with open(sys.argv[1], 'r') as f:
-        content = f.readlines()
+    with open(md_file, "r", encoding="utf-8") as f_md, open(
+        output_file, "w", encoding="utf-8"
+    ) as f_out:
+        in_list = False
+        list_type = None
+        paragraph_lines = []
 
-    line_html_1 = []
-    m = 0
-    for line in content:
-        if line[:2] == '* ':
-            if m == 0:
-                m = 1
-                line_html_1.append('<ol>')
-            line_html_1.append(f"<li>{line[2:].strip()}</li>")
-        else:
-            if m == 1:
-                m = 0
-                line_html_1.append("</ol>")
-            line_html_1.append(line)
-    if m == 1:
-        line_html_1.append("</ol>")
+        def output_paragraph():
+            """
+            Output collected paragraph lines as HTML.
+            """
+            nonlocal paragraph_lines
+            if paragraph_lines:
+                f_out.write("<p>\n")
+                f_out.write(process_inline_formatting(paragraph_lines[0]))
+                for para_line in paragraph_lines[1:]:
+                    f_out.write("<br/>\n")
+                    f_out.write(process_inline_formatting(para_line))
+                f_out.write("</p>\n")
+                paragraph_lines = []
 
-    line_html = []
-    m = 0
-    for line in line_html_1:
-        if line[0] == '-':
-            if m == 0:
-                m = 1
-                line_html.append('<ul>')
-            line_html.append(f"<li>{line[2:].strip()}</li>")
-        else:
-            if m == 1:
-                m = 0
-                line_html.append("</ul>")
-            line_html.append(line)
-    if m == 1:
-        line_html.append("</ul>")
+        for line in f_md:
+            stripped = line.rstrip("\n")
 
-    html_lines = []
-    for i in line_html:
-        if i[0] == '#':
-            b = 0
-            for a in i:
-                if a == '#':
-                    b += 1
-            if b > 0 and b <= 6:
-                text = f"<h{b}>{i[b:].strip()}</h{b}>"
-                html_lines.append(text)
-        else:
-            html_lines.append(i)
 
-    line_html_2 = []
-    m = 0
-    for line in html_lines:
-        if line[:2] == "**" or line[:2] == "((" or line[0].isalpha():
-            if m == 0:
-                m = 1
-                line_html_2.append('<p>')
-                line_html_2.append(line.strip())
-            else:
-                line_html_2.append(f'<br/>\n{line.strip()}')
-        else:
-            if m == 1:
-                m = 0
-                line_html_2.append("</p>")
-            if line[0] != '\n':
-                line_html_2.append(line)
-    if m == 1:
-        line_html_2.append("</p>")
+            if stripped.startswith("#"):
+                hashes, _, text = stripped.partition(" ")
+                level = len(hashes)
+                if 1 <= level <= 6 and text:
+                    output_paragraph()
+                    if in_list:
+                        f_out.write(f"</{list_type}>\n")
+                        in_list = False
+                        list_type = None
+                    formatted_text = process_inline_formatting(text)
+                    f_out.write(f"<h{level}>{formatted_text}</h{level}>\n")
+                    continue
 
-    line_html_4 = []
-    for i in line_html_2:
-        i = i.replace('**', '<b>', 1)
-        i = i.replace('**', '</b>', 1)
-        i = i.replace('__', '<em>', 1)
-        i = i.replace('__', '</em>', 1)
-        line_html_4.append(i)
 
-    line_html_5 = []
+            if stripped.startswith("* "):
+                output_paragraph()
+                if not in_list:
+                    f_out.write("<ol>\n")
+                    in_list = True
+                    list_type = "ol"
+                item_text = stripped[2:]
+                formatted_text = process_inline_formatting(item_text)
+                f_out.write(f"<li>{formatted_text}</li>\n")
+                continue
 
-    for i in line_html_4:
-        k = 0
-        if '[[' in i and ']]' in i:
-            start_index = i.find("[[") + 2
-            end_index = i.find("]]")
-            hash_content = i[start_index:end_index]
-            hashed_content = hashlib.md5(hash_content.encode()).hexdigest()
 
-            text = i[:i.find("[")] + hashed_content + i[i.find("]") + 2:]
+            if stripped.startswith("- "):
+                output_paragraph()
+                if not in_list:
+                    f_out.write("<ul>\n")
+                    in_list = True
+                    list_type = "ul"
+                item_text = stripped[2:]
+                formatted_text = process_inline_formatting(item_text)
+                f_out.write(f"<li>{formatted_text}</li>\n")
+                continue
 
-            line_html_5.append(text.strip())
-            k = 1
-        if '((' in i and '))' in i:
-            cleaned = i.replace(
-                'c',
-                '').replace(
-                'C',
-                '').replace(
-                ')',
-                '').replace(
-                '(',
-                '')
-            line_html_5.append(cleaned.strip())
-            k = 1
-        if k == 0:
-            line_html_5.append(i)
 
-    with open(sys.argv[2], 'w') as f:
-        f.write("\n".join(line_html_5))
+            if in_list:
+                f_out.write(f"</{list_type}>\n")
+                in_list = False
+                list_type = None
+
+
+            if not stripped:
+                output_paragraph()
+                continue
+
+
+            paragraph_lines.append(stripped)
+
+
+        output_paragraph()
+        if in_list:
+            f_out.write(f"</{list_type}>\n")
 
     sys.exit(0)
 
 
 if __name__ == "__main__":
-    """
-    markdown2html module
-    """
     main()
